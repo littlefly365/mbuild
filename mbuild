@@ -1,0 +1,154 @@
+#!/bin/dash
+progname="$(basename $0)"
+: ${cores=$(nproc)}
+
+usage()
+{
+	echo "Usage: $progname [build/check/install]"
+	echo "or: $progname [--help|--version]"
+	exit 0
+}
+
+show_version()
+{
+	echo "mbuild 1.0.0"
+	exit 0
+}
+
+msg_and_exit()
+{
+	echo "$1" 
+	exit 1
+}
+
+case "$1" in
+	--help)
+		usage
+	;;
+	--version)
+		show_version
+	;;
+	build)
+		action="build"
+	;;
+	check)
+		action="check"
+	;;
+	install)
+		action="install"
+	;;
+	'')
+		usage
+	;;
+	*)
+		echo "$progname: unknown option: $1"
+		echo "Try '$progname --help' for more information"
+		exit 1
+	;;
+esac
+
+check_mbuild()
+{
+	if [ ! -f ./MBUILD ]; then
+		echo "MBUILD not found"
+		exit 1
+	else
+		. ./MBUILD
+		pkgfile="$(basename $PKG_SOURCE)"
+	fi
+}
+
+check_arch()
+{
+	if [ "$ARCH" != "$(uname -m)" ]; then
+		echo "Your arch is not supported"
+		exit 1
+	fi
+}
+
+
+download()
+{
+	echo "downloading $1 from $2..."
+	if ! command -v wget >/dev/null 2>&1; then
+		echo "wget is not installed"
+		exit 1
+	else
+		wget -4 -q "$2"
+	fi
+}
+
+check_sha256()
+{
+	if [ "$1" != "$(sha256sum $2)" ]; then
+		echo "Checksum mismatch"
+		exit 1
+	fi
+}
+
+extract()
+{
+	tar xf "$pkgfile"
+}
+
+chdir()
+{
+	cd "$PKG_NAME-$PKG_VERSION"
+}
+
+check_needed()
+{
+	if [ ! -z "$NEEDED" ]; then
+		for i in $NEEDED
+		do
+			download "$i" "$i_SOURCE"
+			check_sha256 "$i_SHA256" "$(basename $i_SOURCE)"
+		done
+	fi
+}
+
+b4_main()
+{
+	check_mbuild
+	if [ "$action" = "build" ]; then
+		check_arch
+		download
+		check_sha256
+		extract
+		chdir
+	fi
+}
+
+main()
+{
+	b4_main
+
+	case "$EXTRA_STEPS" in
+		prepare)
+			prepare_phase
+		;;
+	esac
+
+	if [ "$BUILD_DIR" = "yes" ]; then
+		mkdir -p build
+		cd build
+	fi
+
+	if [ "$action" = "build" ]; then
+		configure_phase || msg_and_exit "configure phase has return with error"
+		build_phase || msg_and_exit "build phase has return with error"
+	elif [ "$action" = "check" ]; then
+		chdir
+		check_phase		
+	elif [ "$action" = "install" ]; then
+		chdir
+		install_phase
+		case "$EXTRA_STEPS" in
+			post-install)
+				post_install_phase
+			;;		
+		esac
+	fi
+}
+
+main
